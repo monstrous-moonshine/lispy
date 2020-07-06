@@ -1,4 +1,5 @@
 #include "lval.hpp"
+using namespace std;
 
 lval::lval(LvalType type, double x) : type(type) {
     as.num = x;
@@ -18,6 +19,18 @@ lval::lval(LvalType type) : type(type) {
 }
 
 lval::~lval() {}
+
+lval lval::pop(int i) {
+    lval x = (*as.cell)[i];
+    as.cell->erase(as.cell->begin() + i);
+    return x;
+}
+
+lval lval::take(int i) {
+    lval x = (*as.cell)[i];
+    delete as.cell;
+    return x;
+}
 
 ostream& lval::print(ostream& out) const {
     switch (type) {

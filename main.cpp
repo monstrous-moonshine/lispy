@@ -29,32 +29,33 @@ lval lval_read(mpc_ast_t* t) {
     return x;
 }
 
-lval eval_op(char* op_, lval x_, lval y_) {
+lval builtin_op(lval a, string op) {}
+
+lval eval_op(string op, lval x_, lval y_) {
     if (x_.type == LVAL_ERR) return x_;
     if (y_.type == LVAL_ERR) return y_;
     double x = x_.as.num;
     double y = y_.as.num;
-    string op(op_);
     if (op == "+") { return NUM_VAL(x + y); }
     if (op == "-") { return NUM_VAL(x - y); }
     if (op == "*") { return NUM_VAL(x * y); }
     if (op == "/") {
         return y == 0
-            ? ERR_VAL(0)
+            ? ERR_VAL("division by 0")
             : NUM_VAL(x / y);
     }
     // unreachable
-    return ERR_VAL(0);
+    return ERR_VAL(nullptr);
 }
 
 lval eval(mpc_ast_t* t) {
     if (strstr(t->tag, "number")) {
         errno = 0;
         double x = strtod(t->contents, NULL);
-        return errno != ERANGE ? NUM_VAL(x) : ERR_VAL(0);
+        return errno != ERANGE ? NUM_VAL(x) : ERR_VAL("invalid number");
     }
 
-    char* op = t->children[1]->contents;
+    string op = t->children[1]->contents;
     lval x = eval(t->children[2]);
     for (int i = 3; strstr(t->children[i]->tag, "expr"); i++) {
         lval y = eval(t->children[i]);
