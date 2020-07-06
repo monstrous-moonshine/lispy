@@ -29,42 +29,6 @@ lval lval_read(mpc_ast_t* t) {
     return x;
 }
 
-lval builtin_op(lval a, string op) {}
-
-lval eval_op(string op, lval x_, lval y_) {
-    if (x_.type == LVAL_ERR) return x_;
-    if (y_.type == LVAL_ERR) return y_;
-    double x = x_.as.num;
-    double y = y_.as.num;
-    if (op == "+") { return NUM_VAL(x + y); }
-    if (op == "-") { return NUM_VAL(x - y); }
-    if (op == "*") { return NUM_VAL(x * y); }
-    if (op == "/") {
-        return y == 0
-            ? ERR_VAL("division by 0")
-            : NUM_VAL(x / y);
-    }
-    // unreachable
-    return ERR_VAL(nullptr);
-}
-
-lval eval(mpc_ast_t* t) {
-    if (strstr(t->tag, "number")) {
-        errno = 0;
-        double x = strtod(t->contents, NULL);
-        return errno != ERANGE ? NUM_VAL(x) : ERR_VAL("invalid number");
-    }
-
-    string op = t->children[1]->contents;
-    lval x = eval(t->children[2]);
-    for (int i = 3; strstr(t->children[i]->tag, "expr"); i++) {
-        lval y = eval(t->children[i]);
-        x = eval_op(op, x, y);
-    }
-
-    return x;
-}
-
 int main(int argc, char *argv[]) {
     cout << "Lispy Version 0.0.0.0.1\n";
     cout << "Press Ctrl+d to Exit\n\n";
@@ -78,7 +42,7 @@ int main(int argc, char *argv[]) {
     mpca_lang(
         MPCA_LANG_DEFAULT,
         "number : /[+-]?[0-9]+([.][0-9]+)?/ ;"
-        "symbol : '+' | '-' | '*' | '/' ;"
+        "symbol : '+' | '-' | '*' | '/' | \"quote\" ;"
         "sexpr  : '(' <expr>* ')' ;"
         "expr   : <number> | <symbol> | <sexpr> ;"
         "lispy  : /^/ <expr> /$/ ;",
@@ -98,6 +62,8 @@ int main(int argc, char *argv[]) {
             //cout << result << "\n";
             lval v = lval_read(output->children[1]);
             cout << v << "\n";
+            lval result = v.eval();
+            cout << result << "\n";
             mpc_ast_delete(output);
         } else {
             mpc_err_print(r.error);
