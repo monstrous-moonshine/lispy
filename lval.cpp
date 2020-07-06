@@ -1,4 +1,5 @@
 #include "lval.hpp"
+#include <cstring>
 using namespace std;
 
 lval::lval(LvalType type, double x) : type(type) {
@@ -21,19 +22,61 @@ lval::lval(LvalType type) : type(type) {
 lval::~lval() {}
 
 lval lval::pop(int i) {
-    lval x = (*as.cell)[i];
+    // TODO: bounds check?
+    lval x = get(i);
     as.cell->erase(as.cell->begin() + i);
     return x;
 }
 
 lval lval::take(int i) {
-    lval x = (*as.cell)[i];
+    // TODO: bounds check?
+    lval x = get(i);
     delete as.cell;
     return x;
 }
 
-lval lval::get(int i) {
-    return (*as.cell)[i];
+lval lval::eval_sexpr() {
+    if (get(0).is_quote()) {
+        if (count() != 2) {
+            return ERR_VAL("quote: wrong # of arg(s)");
+        }
+        return get(1);
+    }
+
+    for (auto& v : *as.cell) {
+        v = v.eval();
+        if (v.type == LVAL_ERR) return v;
+    }
+
+    // TODO: review these 2 lines
+    if (count() == 0) return *this;
+    if (count() == 1) return get(0);
+
+    lval f = pop(0);
+    if (f.type != LVAL_SYM) {
+        return ERR_VAL("s-expression does not start with symbol");
+    }
+
+    return builtin(AS_SYM(f));
+}
+
+lval lval::eval() {
+    if (type == LVAL_SEXPR) return eval_sexpr();
+    return *this;
+}
+
+bool lval::is_quote() const {
+    return type == LVAL_SYM && *as.sym == "quote";
+}
+
+lval lval::builtin(const string& func) {
+    if (func == "head") return builtin_head();
+    if (func == "tail") return builtin_tail();
+    if (func == "list") return builtin_list();
+    if (func == "eval") return builtin_eval();
+    if (func == "join") return builtin_join();
+    if (strstr("+-*/", func.c_str())) return builtin_op(func);
+    return ERR_VAL(func + ": unknown function");
 }
 
 lval lval::builtin_op(const string& op) {
@@ -58,37 +101,67 @@ lval lval::builtin_op(const string& op) {
     return x;
 }
 
-lval lval::eval_sexpr() {
-    if (get(0).is_quote()) {
-        if (count() != 2) {
-            return ERR_VAL("quote: wrong # of args");
-        }
-        return get(1);
-    }
+#define LASSERT(cond, err) \
+    if (!(cond)) { return ERR_VAL(err); }
 
-    for (auto& v : *as.cell) {
-        v = v.eval();
-        if (v.type == LVAL_ERR) return v;
-    }
-
-    if (count() == 0) return *this;
-    if (count() == 1) return get(0);
-
-    lval f = pop(0);
-    if (f.type != LVAL_SYM) {
-        return ERR_VAL("s-expression does not start with symbol");
-    }
-
-    return builtin_op(AS_SYM(f));
+lval lval::builtin_head() {
+    LASSERT(
+        count() == 1,
+        "head: wrong # of arg(s)"
+    );
+    LASSERT(
+        get(0).type == LVAL_SEXPR,
+        "head: wrong arg type"
+    );
+    LASSERT(
+        get(0).count() > 0,
+        "head: empty arg"
+    );
+    return get(0).get(0);
 }
 
-lval lval::eval() {
-    if (type == LVAL_SEXPR) return eval_sexpr();
+lval lval::builtin_tail() {
+    LASSERT(
+        count() == 1,
+        "tail: wrong # of arg(s)"
+    );
+    LASSERT(
+        get(0).type == LVAL_SEXPR,
+        "tail: wrong arg type"
+    );
+    LASSERT(
+        get(0).count() > 0,
+        "tail: empty arg"
+    );
+    get(0).pop(0);
+    return get(0);
+}
+
+lval lval::builtin_join() {
+    lval x = SXP_VAL();
+    for (const auto& v : *as.cell) {
+        LASSERT(
+            v.type == LVAL_SEXPR,
+            "join: wrong arg type"
+        );
+        AS_VEC(x).insert(
+            AS_VEC(x).end(), 
+            AS_VEC(v).begin(), AS_VEC(v).end()
+        );
+    }
+    return x;
+}
+
+lval lval::builtin_list() {
     return *this;
 }
 
-bool lval::is_quote() {
-    return type == LVAL_SYM && *as.sym == "quote";
+lval lval::builtin_eval() {
+    LASSERT(
+        count() == 1,
+        "eval: wrong # of arg(s)"
+    );
+    return get(0).eval();
 }
 
 ostream& lval::print(ostream& out) const {
@@ -98,9 +171,9 @@ ostream& lval::print(ostream& out) const {
     case LVAL_SYM: out << *as.sym; break;
     case LVAL_SEXPR:
         out << "(";
-        for (int i = 0; i < as.cell->size(); i++) {
-            out << (*as.cell)[i];
-            if (i < as.cell->size() - 1) out << " ";
+        for (int i = 0; i < count(); i++) {
+            out << get(i);
+            if (i < count() - 1) out << " ";
         }
         out << ")";
     }

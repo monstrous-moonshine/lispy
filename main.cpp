@@ -17,13 +17,19 @@ lval lval_read_num(mpc_ast_t* t) {
 lval lval_read(mpc_ast_t* t) {
     if (strstr(t->tag, "number")) return lval_read_num(t);
     if (strstr(t->tag, "symbol")) return SYM_VAL(t->contents);
+    if (strstr(t->tag, "qexpr")) {
+        lval x = SXP_VAL();
+        x.push_back(SYM_VAL("quote"));
+        x.push_back(lval_read(t->children[1]));
+        return x;
+    }
 
     lval x = SXP_VAL();
-    for (int i = 0; i < t->children_num; i++) {
-        if (string(t->children[i]->contents) == "(") continue;
-        if (string(t->children[i]->contents) == ")") continue;
-        if (string(t->children[i]->tag) == "regex") continue;
-        x.as.cell->push_back(lval_read(t->children[i]));
+    for (int i = 1; i < t->children_num - 1; i++) {
+        // if (string(t->children[i]->contents) == "(") continue;
+        // if (string(t->children[i]->contents) == ")") continue;
+        // if (string(t->children[i]->tag) == "regex") continue;
+        x.push_back(lval_read(t->children[i]));
     }
 
     return x;
@@ -36,17 +42,21 @@ int main(int argc, char *argv[]) {
     mpc_parser_t* Number = mpc_new("number");
     mpc_parser_t* Symbol = mpc_new("symbol");
     mpc_parser_t* Sexpr  = mpc_new("sexpr");
+    mpc_parser_t* Qexpr  = mpc_new("qexpr");
     mpc_parser_t* Expr   = mpc_new("expr");
     mpc_parser_t* Lispy  = mpc_new("lispy");
 
     mpca_lang(
         MPCA_LANG_DEFAULT,
         "number : /[+-]?[0-9]+([.][0-9]+)?/ ;"
-        "symbol : '+' | '-' | '*' | '/' | \"quote\" ;"
+        "symbol : '+' | '-' | '*' | '/' | \"quote\""
+        "       | \"list\" | \"head\" | \"tail\" | \"join\""
+        "       | \"eval\" ;"
         "sexpr  : '(' <expr>* ')' ;"
-        "expr   : <number> | <symbol> | <sexpr> ;"
+        "qexpr  : '\\'' <expr> ;"
+        "expr   : <number> | <symbol> | <sexpr> | <qexpr> ;"
         "lispy  : /^/ <expr> /$/ ;",
-        Number, Symbol, Sexpr, Expr, Lispy);
+        Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
 
     while (true) {
         char* input = rl_gets("lispy> ");
@@ -56,20 +66,18 @@ int main(int argc, char *argv[]) {
         }
         mpc_result_t r;
         if (mpc_parse("<stdin>", input, Lispy, &r)) {
-            mpc_ast_t* output = static_cast<mpc_ast_t*>(r.output);
-            mpc_ast_print(output);
-            //lval result = eval(output->children[1]);
-            //cout << result << "\n";
-            lval v = lval_read(output->children[1]);
+            mpc_ast_t* t = static_cast<mpc_ast_t*>(r.output);
+            mpc_ast_print(t);
+            lval v = lval_read(t->children[1]);
             cout << v << "\n";
             lval result = v.eval();
             cout << result << "\n";
-            mpc_ast_delete(output);
+            mpc_ast_delete(t);
         } else {
             mpc_err_print(r.error);
             mpc_err_delete(r.error);
         }
     }
 
-    mpc_cleanup(5, Number, Symbol, Sexpr, Expr, Lispy);
+    mpc_cleanup(6, Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
 }
