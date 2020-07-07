@@ -1,6 +1,6 @@
 objs = main.o mpc.o rl.o lval.o
 MPCPATH = /home/samurai/Libraries/mpc
-CXXFLAGS = -g -I$(MPCPATH)
+CXXFLAGS = -g --std=c++17 -I$(MPCPATH)
 
 vpath %.c $(MPCPATH)
 

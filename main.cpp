@@ -10,29 +10,28 @@ char* rl_gets(const char* prompt);
 lval lval_read_num(mpc_ast_t* t) {
     errno = 0;
     double x = strtod(t->contents, NULL);
-    return errno != ERANGE ?
-        NUM_VAL(x) : ERR_VAL("invalid number");
+    if (errno == ERANGE) throw runtime_error("invalid number");
+    return NUM_VAL(x);
 }
 
 lval lval_read(mpc_ast_t* t) {
     if (strstr(t->tag, "number")) return lval_read_num(t);
     if (strstr(t->tag, "symbol")) return SYM_VAL(t->contents);
     if (strstr(t->tag, "qexpr")) {
-        lval x = SXP_VAL();
+        vector<lval> x;
         x.push_back(SYM_VAL("quote"));
         x.push_back(lval_read(t->children[1]));
-        return x;
+        return SXP_VAL(x);
     }
 
-    lval x = SXP_VAL();
+    vector<lval> x;
     for (int i = 1; i < t->children_num - 1; i++) {
         // if (string(t->children[i]->contents) == "(") continue;
         // if (string(t->children[i]->contents) == ")") continue;
         // if (string(t->children[i]->tag) == "regex") continue;
         x.push_back(lval_read(t->children[i]));
     }
-
-    return x;
+    return SXP_VAL(x);
 }
 
 int main(int argc, char *argv[]) {
@@ -49,9 +48,8 @@ int main(int argc, char *argv[]) {
     mpca_lang(
         MPCA_LANG_DEFAULT,
         "number : /[+-]?[0-9]+([.][0-9]+)?/ ;"
-        "symbol : '+' | '-' | '*' | '/' | \"quote\""
-        "       | \"list\" | \"head\" | \"tail\" | \"join\""
-        "       | \"eval\" ;"
+        "symbol : /[A-Za-z+\\-*\\/_<=>?!]"
+                  "[A-Za-z+\\-*\\/_<=>?!0-9]*/ ;"
         "sexpr  : '(' <expr>* ')' ;"
         "qexpr  : '\\'' <expr> ;"
         "expr   : <number> | <symbol> | <sexpr> | <qexpr> ;"
@@ -68,10 +66,14 @@ int main(int argc, char *argv[]) {
         if (mpc_parse("<stdin>", input, Lispy, &r)) {
             mpc_ast_t* t = static_cast<mpc_ast_t*>(r.output);
             mpc_ast_print(t);
-            lval v = lval_read(t->children[1]);
-            cout << v << "\n";
-            lval result = v.eval();
-            cout << result << "\n";
+            try {
+                lval v = lval_read(t->children[1]);
+                cout << v << "\n";
+                lval result = v.eval();
+                cout << result << "\n";
+            } catch (exception& e) {
+                cout << e.what() << "\n";
+            }
             mpc_ast_delete(t);
         } else {
             mpc_err_print(r.error);

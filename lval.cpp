@@ -1,73 +1,50 @@
 #include "lval.hpp"
 #include <cstring>
+#include <stdexcept>
 using namespace std;
 
-lval::lval(LvalType type, double x) : type(type) {
-    as.num = x;
-}
+lval::lval(LvalType type, double x) : type(type), as {.num = x} {}
 
-lval::lval(LvalType type, const string& m) : type(type) {
-    switch (type) {
-    case LVAL_ERR:
-        as.err = new string(m); break;
-    case LVAL_SYM:
-        as.sym = new string(m); break;
+lval::lval(LvalType type, const string& m) : type(type), as {.sym = new string(m)} {}
+
+lval::lval(LvalType type, const vector<lval>& v) : type(type), as {.vec = new vector<lval> (v)} {}
+
+lval lval::eval_sexpr() const {
+    if (size() == 0) {
+        throw runtime_error("s-expr: empty");
     }
-}
-
-lval::lval(LvalType type) : type(type) {
-    as.cell = new vector<lval>();
-}
-
-lval::~lval() {}
-
-lval lval::pop(int i) {
-    // TODO: bounds check?
-    lval x = get(i);
-    as.cell->erase(as.cell->begin() + i);
-    return x;
-}
-
-lval lval::take(int i) {
-    // TODO: bounds check?
-    lval x = get(i);
-    delete as.cell;
-    return x;
-}
-
-lval lval::eval_sexpr() {
-    if (get(0).is_quote()) {
-        if (count() != 2) {
-            return ERR_VAL("quote: wrong # of arg(s)");
+    if (at(0).is_quote()) {
+        if (size() != 2) {
+            throw runtime_error("quote: wrong # of arguments");
         }
-        return get(1);
+        return at(1);
     }
 
-    for (auto& v : *as.cell) {
-        v = v.eval();
-        if (v.type == LVAL_ERR) return v;
-    }
-
-    // TODO: review these 2 lines
-    if (count() == 0) return *this;
-    if (count() == 1) return get(0);
-
-    lval f = pop(0);
+    lval f = at(0).eval();
     if (f.type != LVAL_SYM) {
-        return ERR_VAL("s-expression does not start with symbol");
+        throw runtime_error("s-expr: invalid procedure");
     }
 
-    return builtin(AS_SYM(f));
+    vector<lval> res;
+    for (int i = 1; i < size(); i++) {
+        res.push_back(at(i).eval());
+    }
+
+    lval tail = SXP_VAL(res);
+    return tail.builtin(AS_SYM(f));
 }
 
-lval lval::eval() {
-    if (type == LVAL_SEXPR) return eval_sexpr();
+lval lval::eval() const {
+    if (type == LVAL_SXP) return eval_sexpr();
     return *this;
 }
 
 bool lval::is_quote() const {
     return type == LVAL_SYM && *as.sym == "quote";
 }
+
+#define LASSERT(cond, err) \
+    if (!(cond)) { throw runtime_error(err); }
 
 lval lval::builtin(const string& func) {
     if (func == "head") return builtin_head();
@@ -76,80 +53,85 @@ lval lval::builtin(const string& func) {
     if (func == "eval") return builtin_eval();
     if (func == "join") return builtin_join();
     if (strstr("+-*/", func.c_str())) return builtin_op(func);
-    return ERR_VAL(func + ": unknown function");
+    throw runtime_error(func + ": unknown function");
 }
 
 lval lval::builtin_op(const string& op) {
-    lval x = get(0);
-    if (op == "-" && count() == 1) {
-        AS_NUM(x) = -AS_NUM(x);
+    for (const auto& v : *as.vec) {
+        LASSERT(
+            IS_NUM(v),
+            "builtin_op: non-numeric argument"
+        );
     }
 
-    for (int i = 1; i < count(); i++) {
-        lval y = get(i);
-        if (op == "+") AS_NUM(x) += AS_NUM(y);
-        if (op == "-") AS_NUM(x) -= AS_NUM(y);
-        if (op == "*") AS_NUM(x) *= AS_NUM(y);
+    if (op == "-" && size() == 1) {
+        return NUM_VAL(-AS_NUM(at(0)));
+    }
+
+    LASSERT(
+        size() >= 2,
+        "builtin_op: wrong # of arguments"
+    );
+
+    double x = AS_NUM(at(0));
+    for (int i = 1; i < size(); i++) {
+        double y = AS_NUM(at(i));
+        if (op == "+") x += y;
+        if (op == "-") x -= y;
+        if (op == "*") x *= y;
         if (op == "/") {
-            if (AS_NUM(y) == 0) {
-                return ERR_VAL("division by 0");
+            if (y == 0) {
+                throw runtime_error("builtin_op: division by 0");
             }
-            AS_NUM(x) /= AS_NUM(y);
+            x /= y;
         }
     }
 
-    return x;
+    return NUM_VAL(x);
 }
-
-#define LASSERT(cond, err) \
-    if (!(cond)) { return ERR_VAL(err); }
 
 lval lval::builtin_head() {
     LASSERT(
-        count() == 1,
+        size() == 1,
         "head: wrong # of arg(s)"
     );
     LASSERT(
-        get(0).type == LVAL_SEXPR,
+        at(0).type == LVAL_SXP,
         "head: wrong arg type"
     );
     LASSERT(
-        get(0).count() > 0,
+        at(0).size() > 0,
         "head: empty arg"
     );
-    return get(0).get(0);
+    return at(0).at(0);
 }
 
 lval lval::builtin_tail() {
     LASSERT(
-        count() == 1,
+        size() == 1,
         "tail: wrong # of arg(s)"
     );
     LASSERT(
-        get(0).type == LVAL_SEXPR,
+        at(0).type == LVAL_SXP,
         "tail: wrong arg type"
     );
     LASSERT(
-        get(0).count() > 0,
+        at(0).size() > 0,
         "tail: empty arg"
     );
-    get(0).pop(0);
-    return get(0);
+    return at(0).tail();
 }
 
 lval lval::builtin_join() {
-    lval x = SXP_VAL();
-    for (const auto& v : *as.cell) {
+    vector<lval> x;
+    for (const auto& v : *as.vec) {
         LASSERT(
-            v.type == LVAL_SEXPR,
+            v.type == LVAL_SXP,
             "join: wrong arg type"
         );
-        AS_VEC(x).insert(
-            AS_VEC(x).end(), 
-            AS_VEC(v).begin(), AS_VEC(v).end()
-        );
+        for (const auto& w : *v.as.vec) { x.emplace_back(w); }
     }
-    return x;
+    return SXP_VAL(x);
 }
 
 lval lval::builtin_list() {
@@ -158,22 +140,21 @@ lval lval::builtin_list() {
 
 lval lval::builtin_eval() {
     LASSERT(
-        count() == 1,
+        size() == 1,
         "eval: wrong # of arg(s)"
     );
-    return get(0).eval();
+    return at(0).eval();
 }
 
 ostream& lval::print(ostream& out) const {
     switch (type) {
     case LVAL_NUM: out << as.num; break;
-    case LVAL_ERR: out << "Error: " << *as.err; break;
     case LVAL_SYM: out << *as.sym; break;
-    case LVAL_SEXPR:
+    case LVAL_SXP:
         out << "(";
-        for (int i = 0; i < count(); i++) {
-            out << get(i);
-            if (i < count() - 1) out << " ";
+        for (int i = 0; i < size(); i++) {
+            out << at(i);
+            if (i < size() - 1) out << " ";
         }
         out << ")";
     }

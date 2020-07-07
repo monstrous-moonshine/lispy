@@ -6,29 +6,29 @@
 #include <string>
 
 enum LvalType {
-    LVAL_ERR, LVAL_NUM, LVAL_SYM, LVAL_SEXPR
+    LVAL_NUM, LVAL_SYM, LVAL_SXP
 };
 
 struct lval {
-    LvalType type;
+    const LvalType type;
     union {
-        double num;
-        std::string* err;
-        std::string* sym;
-        std::vector<lval>* cell;
+        const double num;
+        const std::string* const sym;
+        const std::vector<lval>* const vec;
     } as;
     lval(LvalType type, double x);
     lval(LvalType type, const std::string& m);
-    lval(LvalType type);
-    ~lval();
+    lval(LvalType type, const std::vector<lval>& v);
 
-    void push_back(lval v) { as.cell->push_back(v); }
-    lval pop(int i);
-    lval take(int i);
-    lval get(int i) const { return (*as.cell)[i]; }
-    int count() const { return as.cell->size(); }
-    lval eval_sexpr();
-    lval eval();
+    lval operator[](int i) const { return (*as.vec)[i]; }
+    lval at(int i) const { return (*as.vec)[i]; }
+    int size() const { return as.vec->size(); }
+    lval tail() const {
+        return lval(LVAL_SXP, std::vector<lval> (as.vec->begin() + 1, as.vec->end()));
+    }
+
+    lval eval_sexpr() const;
+    lval eval() const;
     lval builtin(const std::string& func);
     lval builtin_op(const std::string& op);
     lval builtin_head();
@@ -44,13 +44,19 @@ private:
     bool is_quote() const;
 };
 
-#define NUM_VAL(x) lval(LVAL_NUM, x)
-#define SYM_VAL(x) lval(LVAL_SYM, x)
-#define ERR_VAL(x) lval(LVAL_ERR, x)
-#define SXP_VAL()  lval(LVAL_SEXPR)
+struct lenv;
+using lbuiltin = lval (*)();
 
-#define AS_NUM(x)  ( x.as.num)
-#define AS_SYM(x)  (*x.as.sym)
-#define AS_VEC(x)  (*x.as.cell)
+#define NUM_VAL(x) lval(LVAL_NUM, (x))
+#define SYM_VAL(x) lval(LVAL_SYM, (x))
+#define SXP_VAL(x) lval(LVAL_SXP, (x))
+
+#define AS_NUM(x)  ( (x).as.num)
+#define AS_SYM(x)  (*(x).as.sym)
+#define AS_VEC(x)  (*(x).as.vec)
+
+#define IS_NUM(x)  ((x).type == LVAL_NUM)
+#define IS_SYM(x)  ((x).type == LVAL_SYM)
+#define IS_SXP(x)  ((x).type == LVAL_SXP)
 
 #endif
