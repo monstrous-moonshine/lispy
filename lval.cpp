@@ -7,35 +7,61 @@ lval::lval(LvalType type, double x) : type(type), as {.num = x} {}
 
 lval::lval(LvalType type, const string& m) : type(type), as {.sym = new string(m)} {}
 
+lval::lval(LvalType type, lbuiltin fun): type(type), as {.fun = fun} {}
+
 lval::lval(LvalType type, const vector<lval>& v) : type(type), as {.vec = new vector<lval> (v)} {}
 
-lval lval::eval_sexpr() const {
-    if (size() == 0) {
-        throw runtime_error("s-expr: empty");
-    }
+#define LASSERT(cond, err) \
+    if (!(cond)) { throw runtime_error(err); }
+
+lval lval::eval_sexpr(lenv& e) const {
+    LASSERT(
+        size() > 0,
+        "s-expr: empty"
+    );
     if (at(0).is_quote()) {
-        if (size() != 2) {
-            throw runtime_error("quote: wrong # of arguments");
-        }
+        LASSERT(
+            size() == 2,
+            "quote: wrong # of arguments"
+        );
         return at(1);
     }
-
-    lval f = at(0).eval();
-    if (f.type != LVAL_SYM) {
-        throw runtime_error("s-expr: invalid procedure");
+    if (at(0).is_def()) {
+        LASSERT(
+            size() == 3,
+            "define: wrong # of arguments"
+        );
+        LASSERT(
+            IS_SYM(at(1)),
+            "define: target must be symbol"
+        );
+        e.emplace(AS_SYM(at(1)), at(2));
+        return at(2);
     }
+
+    lval f = at(0).eval(e);
+    LASSERT(
+        IS_FUN(f),
+        "s-expr: invalid procedure"
+    );
 
     vector<lval> res;
     for (int i = 1; i < size(); i++) {
-        res.push_back(at(i).eval());
+        res.push_back(at(i).eval(e));
     }
-
     lval tail = SXP_VAL(res);
-    return tail.builtin(AS_SYM(f));
+    return AS_FUN(f)(tail, e);
 }
 
-lval lval::eval() const {
-    if (type == LVAL_SXP) return eval_sexpr();
+lval lval::eval(lenv& e) const {
+    if (type == LVAL_SYM) {
+        LASSERT(
+            e.count(*as.sym) > 0,
+            "eval: undefined variable '" + *as.sym + "'"
+        );
+        return e.at(*as.sym);
+    }
+    if (type == LVAL_SXP) return eval_sexpr(e);
     return *this;
 }
 
@@ -43,20 +69,11 @@ bool lval::is_quote() const {
     return type == LVAL_SYM && *as.sym == "quote";
 }
 
-#define LASSERT(cond, err) \
-    if (!(cond)) { throw runtime_error(err); }
-
-lval lval::builtin(const string& func) {
-    if (func == "head") return builtin_head();
-    if (func == "tail") return builtin_tail();
-    if (func == "list") return builtin_list();
-    if (func == "eval") return builtin_eval();
-    if (func == "join") return builtin_join();
-    if (strstr("+-*/", func.c_str())) return builtin_op(func);
-    throw runtime_error(func + ": unknown function");
+bool lval::is_def() const {
+    return type == LVAL_SYM && *as.sym == "define";
 }
 
-lval lval::builtin_op(const string& op) {
+lval lval::builtin_op(const string& op, lenv& e) {
     for (const auto& v : *as.vec) {
         LASSERT(
             IS_NUM(v),
@@ -90,41 +107,57 @@ lval lval::builtin_op(const string& op) {
     return NUM_VAL(x);
 }
 
-lval lval::builtin_head() {
+lval builtin_add(lval v, lenv& e) {
+    return v.builtin_op("+", e);
+}
+
+lval builtin_sub(lval v, lenv& e) {
+    return v.builtin_op("-", e);
+}
+
+lval builtin_mul(lval v, lenv& e) {
+    return v.builtin_op("*", e);
+}
+
+lval builtin_div(lval v, lenv& e) {
+    return v.builtin_op("/", e);
+}
+
+lval builtin_head(lval v, lenv& e) {
     LASSERT(
-        size() == 1,
+        v.size() == 1,
         "head: wrong # of arg(s)"
     );
     LASSERT(
-        at(0).type == LVAL_SXP,
+        v.at(0).type == LVAL_SXP,
         "head: wrong arg type"
     );
     LASSERT(
-        at(0).size() > 0,
+        v.at(0).size() > 0,
         "head: empty arg"
     );
-    return at(0).at(0);
+    return v.at(0).at(0);
 }
 
-lval lval::builtin_tail() {
+lval builtin_tail(lval v, lenv& e) {
     LASSERT(
-        size() == 1,
+        v.size() == 1,
         "tail: wrong # of arg(s)"
     );
     LASSERT(
-        at(0).type == LVAL_SXP,
+        v.at(0).type == LVAL_SXP,
         "tail: wrong arg type"
     );
     LASSERT(
-        at(0).size() > 0,
+        v.at(0).size() > 0,
         "tail: empty arg"
     );
-    return at(0).tail();
+    return v.at(0).tail();
 }
 
-lval lval::builtin_join() {
+lval builtin_join(lval v, lenv& e) {
     vector<lval> x;
-    for (const auto& v : *as.vec) {
+    for (const auto& v : *v.as.vec) {
         LASSERT(
             v.type == LVAL_SXP,
             "join: wrong arg type"
@@ -134,22 +167,35 @@ lval lval::builtin_join() {
     return SXP_VAL(x);
 }
 
-lval lval::builtin_list() {
-    return *this;
+lval builtin_list(lval v, lenv& e) {
+    return v;
 }
 
-lval lval::builtin_eval() {
+lval builtin_eval(lval v, lenv& e) {
     LASSERT(
-        size() == 1,
+        v.size() == 1,
         "eval: wrong # of arg(s)"
     );
-    return at(0).eval();
+    return v.at(0).eval(e);
+}
+
+void lenv_add_builtins(lenv& e) {
+    e.emplace("+", FUN_VAL(builtin_add));
+    e.emplace("-", FUN_VAL(builtin_sub));
+    e.emplace("*", FUN_VAL(builtin_mul));
+    e.emplace("/", FUN_VAL(builtin_div));
+    e.emplace("list", FUN_VAL(builtin_list));
+    e.emplace("head", FUN_VAL(builtin_head));
+    e.emplace("tail", FUN_VAL(builtin_tail));
+    e.emplace("eval", FUN_VAL(builtin_eval));
+    e.emplace("join", FUN_VAL(builtin_join));
 }
 
 ostream& lval::print(ostream& out) const {
     switch (type) {
     case LVAL_NUM: out << as.num; break;
     case LVAL_SYM: out << *as.sym; break;
+    case LVAL_BLT: out << "<fun>"; break;
     case LVAL_SXP:
         out << "(";
         for (int i = 0; i < size(); i++) {

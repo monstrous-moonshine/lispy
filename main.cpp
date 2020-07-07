@@ -56,6 +56,8 @@ int main(int argc, char *argv[]) {
         "lispy  : /^/ <expr> /$/ ;",
         Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
 
+    lenv env;
+    lenv_add_builtins(env);
     while (true) {
         char* input = rl_gets("lispy> ");
         if (!input) {
@@ -69,7 +71,7 @@ int main(int argc, char *argv[]) {
             try {
                 lval v = lval_read(t->children[1]);
                 cout << v << "\n";
-                lval result = v.eval();
+                lval result = v.eval(env);
                 cout << result << "\n";
             } catch (exception& e) {
                 cout << e.what() << "\n";
