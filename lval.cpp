@@ -7,41 +7,51 @@ lval::lval(LvalType type, double x) : type(type), as {.num = x} {}
 
 lval::lval(LvalType type, const string& m) : type(type), as {.sym = new string(m)} {}
 
-lval::lval(LvalType type, lbuiltin fun): type(type), as {.fun = fun} {}
+lval::lval(LvalType type, lbuiltin blt): type(type), as {.blt = blt} {}
+
+lval::lval(LvalType type, const lval_fun& fun) : type(type), as {.fun = new lval_fun(fun)} {}
 
 lval::lval(LvalType type, const vector<lval>& v) : type(type), as {.vec = new vector<lval> (v)} {}
 
 #define LASSERT(cond, err) \
     if (!(cond)) { throw runtime_error(err); }
 
+#define LASSERT_NUM(n, err) LASSERT(size() == (n), (err))
+
 lval lval::eval_sexpr(lenv& e) const {
-    LASSERT(
-        size() > 0,
-        "s-expr: empty"
-    );
-    if (at(0).is_quote()) {
-        LASSERT(
-            size() == 2,
-            "quote: wrong # of arguments"
-        );
+    LASSERT(size() > 0, "s-expr: empty");
+    
+    // quote
+    if (at(0).is_sym("quote")) {
+        LASSERT_NUM(2, "quote: wrong # of arguments");
         return at(1);
     }
-    if (at(0).is_def()) {
-        LASSERT(
-            size() == 3,
-            "define: wrong # of arguments"
+    
+    // define
+    if (at(0).is_sym("define")) {
+        LASSERT_NUM(3, "define: wrong # of arguments");
+        LASSERT(IS_SYM(at(1)), "define: target must be symbol");
+        e.emplace(AS_SYM(at(1)), at(2).eval(e));
+        return e.at(AS_SYM(at(1)));
+    }
+    
+    // lambda
+    if (at(0).is_sym("lambda")) {
+        LASSERT_NUM(3, "lambda: wrong # of arguments");
+        LASSERT(IS_SXP(at(1)), "lambda: argument list is not s-expr");
+        for (auto v : AS_VEC(at(1))) {
+            LASSERT(IS_SYM(v), "lambda: non-symbol in argument list");
+        }
+        return lval(
+            LVAL_FUN,
+            lval_fun {at(1), at(2), &e}
         );
-        LASSERT(
-            IS_SYM(at(1)),
-            "define: target must be symbol"
-        );
-        e.emplace(AS_SYM(at(1)), at(2));
-        return at(2);
     }
 
+    // not a special form, proceed normally
     lval f = at(0).eval(e);
     LASSERT(
-        IS_FUN(f),
+        IS_BLT(f) || IS_FUN(f),
         "s-expr: invalid procedure"
     );
 
@@ -50,27 +60,46 @@ lval lval::eval_sexpr(lenv& e) const {
         res.push_back(at(i).eval(e));
     }
     lval tail = SXP_VAL(res);
-    return AS_FUN(f)(tail, e);
+
+    if (IS_BLT(f)) {
+        return AS_BLT(f)(tail, e);
+    } else {
+        lval_fun fun = AS_FUN(f);
+        // actually, this lenv needs to be allocated on the heap
+        lenv env;
+        env.outer = fun.env;
+        for (int i = 0; i < fun.params.size(); i++) {
+            env.emplace(AS_SYM(fun.params[i]), tail[i]);
+        }
+        return fun.body.eval(env);
+    }
 }
 
 lval lval::eval(lenv& e) const {
     if (type == LVAL_SYM) {
-        LASSERT(
-            e.count(*as.sym) > 0,
-            "eval: undefined variable '" + *as.sym + "'"
-        );
-        return e.at(*as.sym);
+        lenv* env = &e;
+        do {
+            if (env->count(*as.sym) > 0) return env->at(*as.sym);
+            env = env->outer;
+        } while (env);
+        throw runtime_error(
+            "eval: undefined variable '" + *as.sym + "'");
     }
     if (type == LVAL_SXP) return eval_sexpr(e);
     return *this;
 }
 
-bool lval::is_quote() const {
-    return type == LVAL_SYM && *as.sym == "quote";
+bool lval::is_sym(const string& symbol) const {
+    return type == LVAL_SYM && *as.sym == symbol;
 }
 
-bool lval::is_def() const {
-    return type == LVAL_SYM && *as.sym == "define";
+lval lval::tail() const {
+    return SXP_VAL(
+        std::vector<lval> (
+            as.vec->begin() + 1, 
+            as.vec->end()
+        )
+    );
 }
 
 lval lval::builtin_op(const string& op, lenv& e) {
@@ -180,22 +209,23 @@ lval builtin_eval(lval v, lenv& e) {
 }
 
 void lenv_add_builtins(lenv& e) {
-    e.emplace("+", FUN_VAL(builtin_add));
-    e.emplace("-", FUN_VAL(builtin_sub));
-    e.emplace("*", FUN_VAL(builtin_mul));
-    e.emplace("/", FUN_VAL(builtin_div));
-    e.emplace("list", FUN_VAL(builtin_list));
-    e.emplace("head", FUN_VAL(builtin_head));
-    e.emplace("tail", FUN_VAL(builtin_tail));
-    e.emplace("eval", FUN_VAL(builtin_eval));
-    e.emplace("join", FUN_VAL(builtin_join));
+    e.emplace("+", BLT_VAL(builtin_add));
+    e.emplace("-", BLT_VAL(builtin_sub));
+    e.emplace("*", BLT_VAL(builtin_mul));
+    e.emplace("/", BLT_VAL(builtin_div));
+    e.emplace("list", BLT_VAL(builtin_list));
+    e.emplace("head", BLT_VAL(builtin_head));
+    e.emplace("tail", BLT_VAL(builtin_tail));
+    e.emplace("eval", BLT_VAL(builtin_eval));
+    e.emplace("join", BLT_VAL(builtin_join));
 }
 
 ostream& lval::print(ostream& out) const {
     switch (type) {
     case LVAL_NUM: out << as.num; break;
     case LVAL_SYM: out << *as.sym; break;
-    case LVAL_BLT: out << "<fun>"; break;
+    case LVAL_BLT: out << "<builtin>"; break;
+    case LVAL_FUN: out << "<lambda>"; break;
     case LVAL_SXP:
         out << "(";
         for (int i = 0; i < size(); i++) {
@@ -215,4 +245,16 @@ ostream& lval::println(ostream& out) const {
 
 ostream& operator<<(ostream& out, const lval& v) {
     return v.print(out);
+}
+
+lval lenv::at(const std::string& str) {
+    return env.at(str);
+}
+
+int lenv::count(const std::string& str) {
+    return env.count(str);
+}
+
+void lenv::emplace(const std::string& str, lval v) {
+    env.emplace(str, v);
 }
