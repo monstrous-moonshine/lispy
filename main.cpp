@@ -10,12 +10,16 @@ char* rl_gets(const char* prompt);
 lval lval_read_num(mpc_ast_t* t) {
     errno = 0;
     double x = strtod(t->contents, NULL);
-    if (errno == ERANGE) throw runtime_error("invalid number");
+    if (errno == ERANGE) throw runtime_error("read: invalid number");
     return NUM_VAL(x);
 }
 
 lval lval_read(mpc_ast_t* t) {
     if (strstr(t->tag, "number")) return lval_read_num(t);
+    if (strstr(t->tag, "bool")) {
+        return t->contents == string("#t")
+            ? BOOL_VAL(true) : BOOL_VAL(false);
+    }
     if (strstr(t->tag, "symbol")) return SYM_VAL(t->contents);
     if (strstr(t->tag, "qexpr")) {
         vector<lval> x;
@@ -39,6 +43,7 @@ int main(int argc, char *argv[]) {
     cout << "Press Ctrl+d to Exit\n\n";
 
     mpc_parser_t* Number = mpc_new("number");
+    mpc_parser_t* Bool   = mpc_new("bool");
     mpc_parser_t* Symbol = mpc_new("symbol");
     mpc_parser_t* Sexpr  = mpc_new("sexpr");
     mpc_parser_t* Qexpr  = mpc_new("qexpr");
@@ -48,13 +53,14 @@ int main(int argc, char *argv[]) {
     mpca_lang(
         MPCA_LANG_DEFAULT,
         "number : /[+-]?[0-9]+([.][0-9]+)?/ ;"
+        "bool   : \"#t\" | \"#f\";"
         "symbol : /[A-Za-z+\\-*\\/_<=>?!]"
                   "[A-Za-z+\\-*\\/_<=>?!0-9]*/ ;"
         "sexpr  : '(' <expr>* ')' ;"
         "qexpr  : '\\'' <expr> ;"
-        "expr   : <number> | <symbol> | <sexpr> | <qexpr> ;"
+        "expr   : <number> | <bool> | <symbol> | <sexpr> | <qexpr> ;"
         "lispy  : /^/ <expr> /$/ ;",
-        Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
+        Number, Bool, Symbol, Sexpr, Qexpr, Expr, Lispy);
 
     lenv env;
     lenv_add_builtins(env);
@@ -83,5 +89,5 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    mpc_cleanup(6, Number, Symbol, Sexpr, Qexpr, Expr, Lispy);
+    mpc_cleanup(7, Number, Bool, Symbol, Sexpr, Qexpr, Expr, Lispy);
 }

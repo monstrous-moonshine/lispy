@@ -19,43 +19,65 @@ lval::lval(LvalType type, const vector<lval>& v) : type(type), as {.vec = new ve
     if (!(cond)) { throw runtime_error(err); }
 
 #define LASSERT_NUM(n, err) \
-    LASSERT(size() == (n), (err + string(": wrong # of args")))
+    LASSERT(size() == (n), (err) + string(": wrong # of arguments"))
+
+#define LASSERT_TYPE(op, type, typestr) \
+    for (auto v: AS_VEC(at(1))) { \
+        LASSERT(IS_##type(v), string(op) + ": " typestr " argument required"); \
+    }
 
 lval lval::eval_sexpr(lenv& e) const {
-    LASSERT(size() > 0, "s-expr: empty");
+    LASSERT(nonempty(), "s-expr: expression required");
     
     // quote
-    if (at(0).is_sym("quote")) {
+    if (head().is_sym("quote")) {
         LASSERT_NUM(2, "quote");
-        return at(1);
+        lval quoted = at(1);
+        return quoted;
     }
     
     // define
-    if (at(0).is_sym("define")) {
+    if (head().is_sym("define")) {
         LASSERT_NUM(3, "define");
-        LASSERT(IS_SYM(at(1)), "define: target must be symbol");
-        e.emplace(AS_SYM(at(1)), at(2).eval(e));
-        return e.at(AS_SYM(at(1)));
+        if (IS_SYM(at(1))) {
+            lval name = at(1);
+            lval res = at(2).eval(e);
+            e.emplace(AS_SYM(name), res);
+            return res;
+        } else if (IS_SXP(at(1))) {
+            LASSERT(at(1).nonempty(), "define: function name required");
+            LASSERT_TYPE("define", SYM, "symbolic");
+            lval name = at(1).at(0);
+            lval params = at(1).tail();
+            lval body = at(2);
+            lval res = lval(
+                LVAL_FUN,
+                lval_fun {&e, params, body}
+            );
+            e.emplace(AS_SYM(name), res);
+            return res;
+        } else {
+            throw runtime_error("define: invalid definition target");
+        }
     }
     
     // lambda
-    if (at(0).is_sym("lambda")) {
+    if (head().is_sym("lambda")) {
         LASSERT_NUM(3, "lambda");
         LASSERT(IS_SXP(at(1)), "lambda: argument list must be s-expr");
-        for (auto v : AS_VEC(at(1))) {
-            LASSERT(IS_SYM(v), "lambda: arguments must be symbols");
-        }
+        LASSERT_TYPE("lambda", SYM, "symbolic");
         return lval(
             LVAL_FUN,
-            lval_fun {at(1), at(2), &e}
+            lval_fun {&e, at(1), at(2)}
         );
     }
 
     // if
-    if (at(0).is_sym("if")) {
+    if (head().is_sym("if")) {
         LASSERT(size() == 3 || size() == 4, "if: wrong # of args");
-        LASSERT(IS_BOOL(at(1)), "if: condition must be boolean");
-        if (AS_BOOL(at(1))) {
+        lval cond = at(1).eval(e);
+        LASSERT(IS_BOOL(cond), "if: condition must be boolean");
+        if (AS_BOOL(cond)) {
             return at(2).eval(e);
         } else if (size() == 4) {
             return at(3).eval(e);
@@ -65,11 +87,8 @@ lval lval::eval_sexpr(lenv& e) const {
     }
 
     // not a special form, proceed normally
-    lval f = at(0).eval(e);
-    LASSERT(
-        IS_BLT(f) || IS_FUN(f),
-        "s-expr: invalid procedure"
-    );
+    lval f = head().eval(e);
+    LASSERT(IS_BLT(f) || IS_FUN(f), "s-expr: invalid procedure");
 
     vector<lval> res;
     for (int i = 1; i < size(); i++) {
@@ -83,7 +102,7 @@ lval lval::eval_sexpr(lenv& e) const {
         lval_fun fun = AS_FUN(f);
         // actually, this lenv needs to be allocated on the heap
         lenv env;
-        env.outer = fun.env;
+        env.outer = fun.outer;
         for (int i = 0; i < fun.params.size(); i++) {
             env.emplace(AS_SYM(fun.params[i]), tail[i]);
         }
@@ -96,7 +115,7 @@ lval lval::eval(lenv& e) const {
         lenv* env = &e;
         do {
             if (env->count(*as.sym) > 0) return env->at(*as.sym);
-            env = env->outer;
+            else env = env->outer;
         } while (env);
         throw runtime_error(
             "eval: undefined variable '" + *as.sym + "'");
@@ -118,129 +137,105 @@ lval lval::tail() const {
     );
 }
 
-lval lval::builtin_op(const string& op, lenv& e) {
-    for (const auto& v : *as.vec) {
-        LASSERT(
-            IS_NUM(v),
-            "builtin_op: non-numeric argument"
-        );
+#define FASSERT_TYPE(op, type, typestr) \
+    for (auto w: AS_VEC(v)) { \
+        LASSERT(IS_##type(w), string(op) + ": " typestr " argument required"); \
     }
 
-    if (op == "-" && size() == 1) {
-        return NUM_VAL(-AS_NUM(at(0)));
-    }
-
-    LASSERT(
-        size() >= 2,
-        "builtin_op: wrong # of arguments"
-    );
-
-    double x = AS_NUM(at(0));
-    for (int i = 1; i < size(); i++) {
-        double y = AS_NUM(at(i));
-        if (op == "+") x += y;
-        if (op == "-") x -= y;
-        if (op == "*") x *= y;
-        if (op == "/") {
-            if (y == 0) {
-                throw runtime_error("builtin_op: division by 0");
-            }
-            x /= y;
-        }
-    }
-
-    return NUM_VAL(x);
-}
-
-lval builtin_add(lval v, lenv& e) {
-    return v.builtin_op("+", e);
-}
-
-lval builtin_sub(lval v, lenv& e) {
-    return v.builtin_op("-", e);
-}
-
-lval builtin_mul(lval v, lenv& e) {
-    return v.builtin_op("*", e);
-}
-
-lval builtin_div(lval v, lenv& e) {
-    return v.builtin_op("/", e);
-}
+#define FASSERT_TYPE_NUM(op) FASSERT_TYPE(op, NUM, "numeric")
 
 #define FASSERT_NUM(n, err) \
     LASSERT(v.size() == (n), (err + string(": wrong # of args")))
 
+lval builtin_add(lval v, lenv& e) {
+    FASSERT_TYPE_NUM("+");
+    double x = 0;
+    for (auto w: AS_VEC(v)) x += AS_NUM(w);
+    return NUM_VAL(x);
+}
+
+lval builtin_sub(lval v, lenv& e) {
+    FASSERT_TYPE_NUM("-");
+    if (v.size() == 1) return NUM_VAL(-AS_NUM(v.at(0)));
+    else if (v.size() == 2) {
+        return NUM_VAL(AS_NUM(v.at(0)) - AS_NUM(v.at(1)));
+    } else {
+        throw runtime_error("-: too many arguments");
+    }
+}
+
+lval builtin_mul(lval v, lenv& e) {
+    FASSERT_TYPE_NUM("*");
+    double x = 1;
+    for (auto w: AS_VEC(v)) x *= AS_NUM(w);
+    return NUM_VAL(x);
+}
+
+lval builtin_div(lval v, lenv& e) {
+    FASSERT_TYPE_NUM("/");
+    FASSERT_NUM(2, "/");
+    LASSERT(AS_NUM(v.at(1)) != 0, "/: division by 0");
+    return NUM_VAL(AS_NUM(v.at(0)) / AS_NUM(v.at(1)));
+}
+
 lval builtin_lt(lval v, lenv& e) {
     FASSERT_NUM(2, "<");
+    FASSERT_TYPE_NUM("<");
     return BOOL_VAL(AS_NUM(v.at(0)) < AS_NUM(v.at(1)));
 }
 
 lval builtin_gt(lval v, lenv& e) {
     FASSERT_NUM(2, ">");
+    FASSERT_TYPE_NUM(">");
     return BOOL_VAL(AS_NUM(v.at(0)) > AS_NUM(v.at(1)));
 }
 
 lval builtin_le(lval v, lenv& e) {
     FASSERT_NUM(2, "<=");
+    FASSERT_TYPE_NUM("<=");
     return BOOL_VAL(AS_NUM(v.at(0)) <= AS_NUM(v.at(1)));
 }
 
 lval builtin_ge(lval v, lenv& e) {
     FASSERT_NUM(2, ">=");
+    FASSERT_TYPE_NUM(">=");
     return BOOL_VAL(AS_NUM(v.at(0)) >= AS_NUM(v.at(1)));
 }
 
 lval builtin_eq(lval v, lenv& e) {
     FASSERT_NUM(2, "=");
+    FASSERT_TYPE_NUM("=");
     return BOOL_VAL(AS_NUM(v.at(0)) == AS_NUM(v.at(1)));
 }
 
 lval builtin_ne(lval v, lenv& e) {
     FASSERT_NUM(2, "<>");
+    FASSERT_TYPE_NUM("<>");
     return BOOL_VAL(AS_NUM(v.at(0)) != AS_NUM(v.at(1)));
 }
 
 lval builtin_head(lval v, lenv& e) {
-    LASSERT(
-        v.size() == 1,
-        "head: wrong # of arg(s)"
-    );
-    LASSERT(
-        v.at(0).type == LVAL_SXP,
-        "head: wrong arg type"
-    );
-    LASSERT(
-        v.at(0).size() > 0,
-        "head: empty arg"
-    );
+    FASSERT_NUM(1, "head");
+    LASSERT(IS_SXP(v.at(0)), "head: list required");
+    LASSERT(v.at(0).nonempty(), "head: empty list");
     return v.at(0).at(0);
 }
 
 lval builtin_tail(lval v, lenv& e) {
-    LASSERT(
-        v.size() == 1,
-        "tail: wrong # of arg(s)"
-    );
-    LASSERT(
-        v.at(0).type == LVAL_SXP,
-        "tail: wrong arg type"
-    );
-    LASSERT(
-        v.at(0).size() > 0,
-        "tail: empty arg"
-    );
+    FASSERT_NUM(1, "tail");
+    LASSERT(IS_SXP(v.at(0)), "tail: list required");
+    LASSERT(v.at(0).nonempty(), "tail: empty list");
     return v.at(0).tail();
 }
 
 lval builtin_join(lval v, lenv& e) {
     vector<lval> x;
-    for (const auto& v : *v.as.vec) {
+    for (auto& u : AS_VEC(v)) {
         LASSERT(
-            v.type == LVAL_SXP,
-            "join: wrong arg type"
+            u.type == LVAL_SXP,
+            "join: list required"
         );
-        for (const auto& w : *v.as.vec) { x.emplace_back(w); }
+        for (auto& w : AS_VEC(u)) { x.emplace_back(w); }
     }
     return SXP_VAL(x);
 }
@@ -250,10 +245,7 @@ lval builtin_list(lval v, lenv& e) {
 }
 
 lval builtin_eval(lval v, lenv& e) {
-    LASSERT(
-        v.size() == 1,
-        "eval: wrong # of arg(s)"
-    );
+    FASSERT_NUM(1, "eval");
     return v.at(0).eval(e);
 }
 
@@ -275,32 +267,24 @@ void lenv_add_builtins(lenv& e) {
     e.emplace("<>", BLT_VAL(builtin_ne));
 }
 
-ostream& lval::print(ostream& out) const {
-    switch (type) {
-    case LVAL_NUM: out << as.num; break;
-    case LVAL_BOOL: out << (as.truth ? "#t" : "#f"); break;
-    case LVAL_SYM: out << *as.sym; break;
-    case LVAL_BLT: out << "<builtin>"; break;
-    case LVAL_FUN: out << "<lambda>"; break;
+ostream& operator<<(ostream& out, const lval& v) {
+    switch (v.type) {
+    case LVAL_NUM: out << AS_NUM(v); break;
+    case LVAL_BOOL: out << (AS_BOOL(v) ? "#t" : "#f"); break;
+    case LVAL_SYM: out << AS_SYM(v); break;
+    case LVAL_BLT: out << "<builtin function>"; break;
+    case LVAL_FUN:
+        out << "(lambda " << AS_FUN(v).params << " ...)";
+        break;
     case LVAL_SXP:
         out << "(";
-        for (int i = 0; i < size(); i++) {
-            out << at(i);
-            if (i < size() - 1) out << " ";
+        for (int i = 0; i < v.size(); i++) {
+            out << v[i];
+            if (i < v.size() - 1) out << " ";
         }
         out << ")";
     }
     return out;
-}
-
-ostream& lval::println(ostream& out) const {
-    print(out);
-    out << "\n";
-    return out;
-}
-
-ostream& operator<<(ostream& out, const lval& v) {
-    return v.print(out);
 }
 
 lval lenv::at(const std::string& str) {

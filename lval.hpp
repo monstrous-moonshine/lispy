@@ -35,15 +35,15 @@ struct lval {
     lval operator[](int i) const { return (*as.vec)[i]; }
     lval at(int i) const { return (*as.vec)[i]; }
     int size() const { return as.vec->size(); }
+    lval head() const { return at(0); }
     lval tail() const;
+    bool nonempty() const { return size() > 0; }
 
     lval eval_sexpr(lenv& e) const;
     lval eval(lenv& e) const;
-    lval builtin_op(const std::string& op, lenv& e);
 
-    std::ostream& print(std::ostream& out) const;
-    std::ostream& println(std::ostream& out) const;
     friend std::ostream& operator<<(std::ostream& out, const lval& v);
+
 private:
     bool is_sym(const std::string&) const;
 };
@@ -69,21 +69,6 @@ private:
 #define IS_FUN(x)  ((x).type == LVAL_FUN)
 #define IS_SXP(x)  ((x).type == LVAL_SXP)
 
-lval builtin_add(lval v, lenv& e);
-lval builtin_sub(lval v, lenv& e);
-lval builtin_mul(lval v, lenv& e);
-lval builtin_div(lval v, lenv& e);
-lval builtin_head(lval v, lenv& e);
-lval builtin_tail(lval v, lenv& e);
-lval builtin_list(lval v, lenv& e);
-lval builtin_eval(lval v, lenv& e);
-lval builtin_join(lval v, lenv& e);
-lval builtin_lt(lval v, lenv& e);
-lval builtin_gt(lval v, lenv& e);
-lval builtin_le(lval v, lenv& e);
-lval builtin_ge(lval v, lenv& e);
-lval builtin_eq(lval v, lenv& e);
-lval builtin_ne(lval v, lenv& e);
 void lenv_add_builtins(lenv& e);
 
 struct lenv {
@@ -95,9 +80,9 @@ struct lenv {
 };
 
 struct lval_fun {
+    lenv* outer = nullptr;
     lval params;
     lval body;
-    lenv* env;
 };
 
 #endif
