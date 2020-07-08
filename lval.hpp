@@ -50,7 +50,7 @@ private:
 
 #define NUM_VAL(x) lval(LVAL_NUM, (x))
 #define BOOL_VAL(x) lval(LVAL_BOOL, (x))
-#define SYM_VAL(x) lval(LVAL_SYM, (x))
+#define SYM_VAL(x) lval(LVAL_SYM, std::string(x))
 #define BLT_VAL(x) lval(LVAL_BLT, (x))
 #define FUN_VAL(x) lval(LVAL_FUN, (x))
 #define SXP_VAL(x) lval(LVAL_SXP, (x))
