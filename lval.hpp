@@ -12,19 +12,21 @@ struct lval_fun;
 using lbuiltin = lval (*)(lval, lenv&);
 
 enum LvalType {
-    LVAL_NUM, LVAL_SYM, LVAL_BLT, LVAL_FUN, LVAL_SXP
+    LVAL_NUM, LVAL_BOOL, LVAL_SYM, LVAL_BLT, LVAL_FUN, LVAL_SXP
 };
 
 struct lval {
     const LvalType type;
     union {
         const double num;
+        const bool truth;
         const std::string* const sym;
         const lbuiltin blt;
         const lval_fun* const fun;
         const std::vector<lval>* const vec;
     } as;
     lval(LvalType type, double x);
+    lval(LvalType type, bool truth);
     lval(LvalType type, const std::string& m);
     lval(LvalType type, lbuiltin blt);
     lval(LvalType type, const lval_fun& fun);
@@ -47,18 +49,21 @@ private:
 };
 
 #define NUM_VAL(x) lval(LVAL_NUM, (x))
+#define BOOL_VAL(x) lval(LVAL_BOOL, (x))
 #define SYM_VAL(x) lval(LVAL_SYM, (x))
 #define BLT_VAL(x) lval(LVAL_BLT, (x))
 #define FUN_VAL(x) lval(LVAL_FUN, (x))
 #define SXP_VAL(x) lval(LVAL_SXP, (x))
 
 #define AS_NUM(x)  ( (x).as.num)
+#define AS_BOOL(x) ( (x).as.truth)
 #define AS_SYM(x)  (*(x).as.sym)
 #define AS_BLT(x)  ( (x).as.blt)
 #define AS_FUN(x)  (*(x).as.fun)
 #define AS_VEC(x)  (*(x).as.vec)
 
 #define IS_NUM(x)  ((x).type == LVAL_NUM)
+#define IS_BOOL(x) ((x).type == LVAL_BOOL)
 #define IS_SYM(x)  ((x).type == LVAL_SYM)
 #define IS_BLT(x)  ((x).type == LVAL_BLT)
 #define IS_FUN(x)  ((x).type == LVAL_FUN)
@@ -73,6 +78,12 @@ lval builtin_tail(lval v, lenv& e);
 lval builtin_list(lval v, lenv& e);
 lval builtin_eval(lval v, lenv& e);
 lval builtin_join(lval v, lenv& e);
+lval builtin_lt(lval v, lenv& e);
+lval builtin_gt(lval v, lenv& e);
+lval builtin_le(lval v, lenv& e);
+lval builtin_ge(lval v, lenv& e);
+lval builtin_eq(lval v, lenv& e);
+lval builtin_ne(lval v, lenv& e);
 void lenv_add_builtins(lenv& e);
 
 struct lenv {

@@ -5,6 +5,8 @@ using namespace std;
 
 lval::lval(LvalType type, double x) : type(type), as {.num = x} {}
 
+lval::lval(LvalType type, bool truth): type(type), as {.truth = truth} {}
+
 lval::lval(LvalType type, const string& m) : type(type), as {.sym = new string(m)} {}
 
 lval::lval(LvalType type, lbuiltin blt): type(type), as {.blt = blt} {}
@@ -16,20 +18,21 @@ lval::lval(LvalType type, const vector<lval>& v) : type(type), as {.vec = new ve
 #define LASSERT(cond, err) \
     if (!(cond)) { throw runtime_error(err); }
 
-#define LASSERT_NUM(n, err) LASSERT(size() == (n), (err))
+#define LASSERT_NUM(n, err) \
+    LASSERT(size() == (n), (err + string(": wrong # of args")))
 
 lval lval::eval_sexpr(lenv& e) const {
     LASSERT(size() > 0, "s-expr: empty");
     
     // quote
     if (at(0).is_sym("quote")) {
-        LASSERT_NUM(2, "quote: wrong # of arguments");
+        LASSERT_NUM(2, "quote");
         return at(1);
     }
     
     // define
     if (at(0).is_sym("define")) {
-        LASSERT_NUM(3, "define: wrong # of arguments");
+        LASSERT_NUM(3, "define");
         LASSERT(IS_SYM(at(1)), "define: target must be symbol");
         e.emplace(AS_SYM(at(1)), at(2).eval(e));
         return e.at(AS_SYM(at(1)));
@@ -37,15 +40,28 @@ lval lval::eval_sexpr(lenv& e) const {
     
     // lambda
     if (at(0).is_sym("lambda")) {
-        LASSERT_NUM(3, "lambda: wrong # of arguments");
-        LASSERT(IS_SXP(at(1)), "lambda: argument list is not s-expr");
+        LASSERT_NUM(3, "lambda");
+        LASSERT(IS_SXP(at(1)), "lambda: argument list must be s-expr");
         for (auto v : AS_VEC(at(1))) {
-            LASSERT(IS_SYM(v), "lambda: non-symbol in argument list");
+            LASSERT(IS_SYM(v), "lambda: arguments must be symbols");
         }
         return lval(
             LVAL_FUN,
             lval_fun {at(1), at(2), &e}
         );
+    }
+
+    // if
+    if (at(0).is_sym("if")) {
+        LASSERT(size() == 3 || size() == 4, "if: wrong # of args");
+        LASSERT(IS_BOOL(at(1)), "if: condition must be boolean");
+        if (AS_BOOL(at(1))) {
+            return at(2).eval(e);
+        } else if (size() == 4) {
+            return at(3).eval(e);
+        } else {
+            return SXP_VAL(vector<lval> ());
+        }
     }
 
     // not a special form, proceed normally
@@ -152,6 +168,39 @@ lval builtin_div(lval v, lenv& e) {
     return v.builtin_op("/", e);
 }
 
+#define FASSERT_NUM(n, err) \
+    LASSERT(v.size() == (n), (err + string(": wrong # of args")))
+
+lval builtin_lt(lval v, lenv& e) {
+    FASSERT_NUM(2, "<");
+    return BOOL_VAL(AS_NUM(v.at(0)) < AS_NUM(v.at(1)));
+}
+
+lval builtin_gt(lval v, lenv& e) {
+    FASSERT_NUM(2, ">");
+    return BOOL_VAL(AS_NUM(v.at(0)) > AS_NUM(v.at(1)));
+}
+
+lval builtin_le(lval v, lenv& e) {
+    FASSERT_NUM(2, "<=");
+    return BOOL_VAL(AS_NUM(v.at(0)) <= AS_NUM(v.at(1)));
+}
+
+lval builtin_ge(lval v, lenv& e) {
+    FASSERT_NUM(2, ">=");
+    return BOOL_VAL(AS_NUM(v.at(0)) >= AS_NUM(v.at(1)));
+}
+
+lval builtin_eq(lval v, lenv& e) {
+    FASSERT_NUM(2, "=");
+    return BOOL_VAL(AS_NUM(v.at(0)) == AS_NUM(v.at(1)));
+}
+
+lval builtin_ne(lval v, lenv& e) {
+    FASSERT_NUM(2, "<>");
+    return BOOL_VAL(AS_NUM(v.at(0)) != AS_NUM(v.at(1)));
+}
+
 lval builtin_head(lval v, lenv& e) {
     LASSERT(
         v.size() == 1,
@@ -218,11 +267,18 @@ void lenv_add_builtins(lenv& e) {
     e.emplace("tail", BLT_VAL(builtin_tail));
     e.emplace("eval", BLT_VAL(builtin_eval));
     e.emplace("join", BLT_VAL(builtin_join));
+    e.emplace("<",  BLT_VAL(builtin_lt));
+    e.emplace(">",  BLT_VAL(builtin_gt));
+    e.emplace("<=", BLT_VAL(builtin_le));
+    e.emplace(">=", BLT_VAL(builtin_ge));
+    e.emplace("=",  BLT_VAL(builtin_eq));
+    e.emplace("<>", BLT_VAL(builtin_ne));
 }
 
 ostream& lval::print(ostream& out) const {
     switch (type) {
     case LVAL_NUM: out << as.num; break;
+    case LVAL_BOOL: out << (as.truth ? "#t" : "#f"); break;
     case LVAL_SYM: out << *as.sym; break;
     case LVAL_BLT: out << "<builtin>"; break;
     case LVAL_FUN: out << "<lambda>"; break;
